@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments and model caches
+.venv/
+venv/
+env/
+.cache/
+
+# Generated datasets and experiment artifacts
+data/
+assets/
+outputs/
+downloads/
+logs/
+temp/
+*.pt
+*.pth
+*.npz
+*.npy
+*.tar.gz
+*.zip
+
+# Editors and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
