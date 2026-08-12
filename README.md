@@ -13,7 +13,7 @@ This repository is an isolated research implementation. It does not modify or de
 - `build_atomic16_partition.py`: construction of a reusable 16-atom vocabulary partition from model probabilities and token embeddings.
 - `compare_*.py` and `analyze_insample_generalization.py`: capacity, objective, transfer, and in-sample diagnostics.
 - `test_*.py`: objective, static/dynamic target, and multi-rule regression tests.
-- `*.slurm` and `submit_*.sh`: MSI launchers for the completed OPT-125M experiments.
+- `*.slurm` and `submit_*.sh`: MSI launchers for the OPT-125M and Qwen3-8B experiments.
 
 ## Current Protocol
 
@@ -68,6 +68,21 @@ The launchers assume a CUDA environment and write all generated artifacts under 
 bash submit_opt_atomic16_multirule.sh
 ```
 
+The Qwen3-8B A100 pipeline builds its model-specific atomic partition and then
+submits the seven-rule experiment with an `afterok` dependency:
+
+```bash
+bash submit_qwen3_atomic16_a100_pipeline.sh
+```
+
+The Qwen3 smoke and runtime launchers can be submitted independently before a
+full run:
+
+```bash
+sbatch run_qwen3_a100_smoke.slurm
+sbatch run_qwen3_a100_runtime_benchmark.slurm
+```
+
 After completion:
 
 ```bash
@@ -79,4 +94,6 @@ python validate_atomic16_pipeline.py \
 
 ## Status
 
-The implementation currently targets OPT-125M for controlled ablations. The abstractions support both static and prefix-dependent target sets, but broader model-scale validation is ongoing.
+The implementation supports controlled OPT-125M ablations and the corresponding
+Qwen3-8B A100 pipeline. The same abstractions cover static and prefix-dependent
+target sets.
