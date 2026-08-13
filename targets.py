@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
-from dataclasses import dataclass
+import math
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Sequence
 
@@ -18,6 +20,10 @@ RULE_ATOMIC_KGW = 4
 RULE_UNIGRAM = 5
 RULE_ATOMIC_KGW25 = 6
 RULE_ENTROPY_KGW = 7
+RULE_COMPOSITION_2 = 8
+RULE_COMPOSITION_4 = 9
+RULE_COMPOSITION_7 = 10
+RULE_COMPOSITION_8 = 11
 RULE_NAMES = {
     RULE_ECC: "ecc",
     RULE_KGW: "kgw",
@@ -34,6 +40,16 @@ DYNAMIC_RULE_IDS = {
     RULE_ATOMIC_KGW,
     RULE_ATOMIC_KGW25,
     RULE_ENTROPY_KGW,
+}
+COMPOSITION_RULE_BY_CARDINALITY = {
+    2: RULE_COMPOSITION_2,
+    4: RULE_COMPOSITION_4,
+    7: RULE_COMPOSITION_7,
+    8: RULE_COMPOSITION_8,
+}
+COMPOSITION_CARDINALITY_BY_RULE = {
+    rule_id: cardinality
+    for cardinality, rule_id in COMPOSITION_RULE_BY_CARDINALITY.items()
 }
 
 
@@ -104,6 +120,75 @@ def make_rule_assignments(count: int, kgw_fraction: float, *, seed: int) -> np.n
     return assignments
 
 
+def _exhaustive_combination_indices(
+    count: int,
+    *,
+    num_atoms: int,
+    cardinality: int,
+) -> np.ndarray:
+    """Enumerate every union canonically before starting another full pass."""
+    total = math.comb(int(num_atoms), int(cardinality))
+    return np.resize(np.arange(total, dtype=np.int32), int(count))
+
+
+def make_composition_curriculum(
+    prompts: Sequence[str],
+    *,
+    repeats: int,
+    generated_tokens: int,
+    cardinalities: Sequence[int],
+    num_atoms: int,
+) -> tuple[list[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Build watermark-agnostic trajectories over requested atom unions."""
+    cardinalities = tuple(int(value) for value in cardinalities)
+    unknown = sorted(set(cardinalities) - set(COMPOSITION_RULE_BY_CARDINALITY))
+    if unknown:
+        raise ValueError(f"Unsupported composition cardinalities: {unknown}")
+    if not cardinalities:
+        raise ValueError("At least one composition cardinality is required.")
+    if int(repeats) <= 0:
+        raise ValueError("Composition repeats must be positive.")
+
+    expanded_prompts = [
+        str(prompt)
+        for _ in range(int(repeats))
+        for prompt in prompts
+    ]
+    sequence_count = len(expanded_prompts)
+    key_indices = np.zeros(sequence_count, dtype=np.uint16)
+    target_codes = np.zeros((sequence_count, int(generated_tokens)), dtype=np.int8)
+    rule_ids = np.empty(sequence_count, dtype=np.uint8)
+    combination_indices = np.empty(
+        (sequence_count, int(generated_tokens)), dtype=np.int32
+    )
+
+    prompt_count = len(prompts)
+    for repeat_index in range(int(repeats)):
+        for prompt_index in range(prompt_count):
+            sequence_index = repeat_index * prompt_count + prompt_index
+            cardinality = cardinalities[
+                (prompt_index + repeat_index) % len(cardinalities)
+            ]
+            rule_ids[sequence_index] = COMPOSITION_RULE_BY_CARDINALITY[cardinality]
+
+    for cardinality in cardinalities:
+        rows = np.flatnonzero(rule_ids == COMPOSITION_RULE_BY_CARDINALITY[cardinality])
+        values = _exhaustive_combination_indices(
+            rows.size * int(generated_tokens),
+            num_atoms=int(num_atoms),
+            cardinality=cardinality,
+        ).reshape(rows.size, int(generated_tokens))
+        combination_indices[rows] = values
+
+    return (
+        expanded_prompts,
+        key_indices,
+        target_codes,
+        rule_ids,
+        combination_indices,
+    )
+
+
 def feasible_codewords(block_len: int = 7, vt_a: int = 6) -> list[tuple[int, ...]]:
     parity_columns = [tuple((index >> bit) & 1 for bit in range(3)) for index in range(1, 8)]
     feasible: list[tuple[int, ...]] = []
@@ -131,8 +216,34 @@ class Partition:
     binary_0_atoms: tuple[int, ...] | None = None
     binary_1_atoms: tuple[int, ...] | None = None
     cw_atoms: tuple[tuple[int, ...], ...] | None = None
+    metadata: dict[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.leaf_ids = np.asarray(self.leaf_ids, dtype=np.int16)
+        self.semantic_group_ids = np.asarray(
+            self.semantic_group_ids, dtype=np.int32
+        )
+        self.boundary_ids = np.asarray(self.boundary_ids, dtype=np.int64)
+        self.banned_ids = np.asarray(self.banned_ids, dtype=np.int64)
+        if self.leaf_ids.ndim != 1:
+            raise ValueError("leaf_ids must be one-dimensional.")
+        if self.semantic_group_ids.shape != self.leaf_ids.shape:
+            raise ValueError("semantic_group_ids must match leaf_ids shape.")
+        if self.num_leaves <= 0 or self.num_leaves & (self.num_leaves - 1):
+            raise ValueError("num_leaves must be a positive power of two.")
+        usable = self.leaf_ids >= 0
+        if not bool(usable.any()):
+            raise ValueError("Partition contains no usable vocabulary tokens.")
+        if int(self.leaf_ids[usable].max()) >= int(self.num_leaves):
+            raise ValueError("leaf_ids contains an out-of-range atom index.")
+        for name, ids in (
+            ("boundary_ids", self.boundary_ids),
+            ("banned_ids", self.banned_ids),
+        ):
+            if ids.ndim != 1:
+                raise ValueError(f"{name} must be one-dimensional.")
+            if ids.size and (int(ids.min()) < 0 or int(ids.max()) >= self.vocab_size):
+                raise ValueError(f"{name} contains an out-of-range token ID.")
         self._key_cache: dict[int, np.ndarray] = {}
 
     @classmethod
@@ -187,6 +298,7 @@ class Partition:
                 if cw is not None
                 else None
             ),
+            metadata=dict(config.get("metadata") or {}),
         )
 
     @property
@@ -246,7 +358,10 @@ class TargetRegistry:
             for mask in key_masks:
                 masks.append(mask)
                 ids = torch.from_numpy(np.flatnonzero(mask).astype(np.int64))
-                summaries.append(normalized.index_select(0, ids).mean(dim=0))
+                if ids.numel():
+                    summaries.append(normalized.index_select(0, ids).mean(dim=0))
+                else:
+                    summaries.append(torch.zeros(normalized.shape[1]))
         self.masks = torch.from_numpy(np.stack(masks, axis=0))
         self.summaries = torch.stack(summaries, dim=0)
         self.bucket_ids_by_key = np.stack(bucket_ids, axis=0)
@@ -260,6 +375,26 @@ class TargetRegistry:
             else None
         )
         self.cw_masks = self._composition_masks(partition.cw_atoms)
+        self.generic_combinations = {
+            rule_id: np.asarray(
+                list(itertools.combinations(range(partition.num_leaves), cardinality)),
+                dtype=np.int16,
+            )
+            for rule_id, cardinality in COMPOSITION_CARDINALITY_BY_RULE.items()
+            if cardinality < partition.num_leaves
+        }
+        self.atom_bit_by_token = np.zeros(partition.vocab_size, dtype=np.uint32)
+        valid_atoms = partition.leaf_ids >= 0
+        self.atom_bit_by_token[valid_atoms] = np.left_shift(
+            np.uint32(1), partition.leaf_ids[valid_atoms].astype(np.uint32)
+        )
+        self.generic_combination_bits = {
+            rule_id: np.bitwise_or.reduce(
+                np.left_shift(np.uint32(1), combinations.astype(np.uint32)),
+                axis=1,
+            )
+            for rule_id, combinations in self.generic_combinations.items()
+        }
 
     def _composition_masks(
         self, atom_groups: Sequence[Sequence[int] | None] | None
@@ -271,6 +406,8 @@ class TargetRegistry:
             & self.kgw_eligible_mask
             for group in atom_groups
         ]
+        if any(not bool(mask.any()) for mask in masks):
+            raise ValueError("A configured target composition has no usable tokens.")
         return torch.from_numpy(np.stack(masks, axis=0))
 
     @staticmethod
@@ -309,9 +446,33 @@ class TargetRegistry:
             (rule_ids.numel(), self.partition.vocab_size), dtype=torch.bool
         )
         eligible = self.kgw_eligible_mask
+        generic_rows = np.flatnonzero(
+            np.isin(rule_ids.numpy(), tuple(COMPOSITION_CARDINALITY_BY_RULE))
+        )
+        for rule_id in COMPOSITION_CARDINALITY_BY_RULE:
+            rows = generic_rows[rule_ids.numpy()[generic_rows] == int(rule_id)]
+            if rows.size == 0:
+                continue
+            combination_indices = kgw_seeds.numpy()[rows]
+            if (
+                (combination_indices < 0).any()
+                or (combination_indices >= len(self.generic_combination_bits[rule_id])).any()
+            ):
+                raise ValueError(
+                    f"Invalid composition index for generic rule {rule_id}."
+                )
+            bitmasks = self.generic_combination_bits[rule_id][combination_indices]
+            masks = (
+                np.bitwise_and(bitmasks[:, None], self.atom_bit_by_token[None, :])
+                != 0
+            )
+            masks &= eligible[None, :]
+            resolved[torch.from_numpy(rows)] = torch.from_numpy(masks)
         for row in range(rule_ids.numel()):
             rule_id = int(rule_ids[row])
             code = int(target_codes[row])
+            if rule_id in COMPOSITION_CARDINALITY_BY_RULE:
+                continue
             if rule_id == RULE_ECC:
                 descriptor = int(key_indices[row]) * 4 + code
                 resolved[row] = self.masks[descriptor]

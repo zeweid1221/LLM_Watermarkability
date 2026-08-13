@@ -1,13 +1,12 @@
 #!/bin/bash -l
-#SBATCH -A liyanxie
 #SBATCH -p a100-4
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=64G
 #SBATCH --time=00:30:00
 #SBATCH -J wm_qwen3_smoke
-#SBATCH -o /users/2/deng0379/watermarkability_lora_msi/logs/qwen3_smoke_%j.out
-#SBATCH -e /users/2/deng0379/watermarkability_lora_msi/logs/qwen3_smoke_%j.err
+#SBATCH -o logs/qwen3_smoke_%j.out
+#SBATCH -e logs/qwen3_smoke_%j.err
 
 set -euo pipefail
 

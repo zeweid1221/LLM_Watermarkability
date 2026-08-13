@@ -1,5 +1,4 @@
 #!/bin/bash -l
-#SBATCH -A liyanxie
 #SBATCH -p a100-4
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
@@ -26,6 +25,7 @@ assert torch.cuda.is_available(), "This experiment requires a GPU allocation."
 PY
 
 python run_experiment.py \
+  --training-protocol schedule_pool \
   --manifest data/mixed_prompts_5756.jsonl \
   --partition-dir assets/opt_hierarchy \
   --output-dir outputs/opt125m_lora_5k_seed20260810 \

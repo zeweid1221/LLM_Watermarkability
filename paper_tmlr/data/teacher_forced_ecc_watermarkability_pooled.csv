@@ -1,0 +1,3 @@
+model,target_mass_tau,mean_native_target_mass,mean_required_bias_at_tau,empirical_watermarkability_at_tau,boundary_step_fraction,boundary_incompatibility_share,boundary_watermarkability_share
+opt-125m,0.99,0.6214723285970826,3.7098079336336007,1.376206968715111,0.125,0.5883757506833673,0.5961563900401275
+qwen3-8b,0.99,0.6037837563968849,5.578600738403872,3.4641280504453698,0.125,0.4970738149890784,0.4987838137911717

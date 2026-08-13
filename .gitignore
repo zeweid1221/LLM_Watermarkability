@@ -18,12 +18,24 @@ outputs/
 downloads/
 logs/
 temp/
+tmp*/
+result_archive/
+msi_results_*/
+paper_tmlr_backup_*/
+tmlr_template_download/
 *.pt
 *.pth
 *.npz
 *.npy
 *.tar.gz
 *.zip
+
+# Small, fixed model-specific partitions used by the paper protocols.
+!assets/
+assets/*
+!assets/atomic16/
+!assets/atomic16/**
+!assets/atomic16/**/*.npy
 
 # Editors and OS files
 .vscode/

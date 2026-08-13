@@ -1,18 +1,16 @@
 #!/bin/bash -l
-#SBATCH -A liyanxie
 #SBATCH -p a100-4
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=128G
 #SBATCH --time=04:00:00
 #SBATCH -J wm_qwen3_part
-#SBATCH -o /users/2/deng0379/watermarkability_lora_msi/logs/qwen3_part_%j.out
-#SBATCH -e /users/2/deng0379/watermarkability_lora_msi/logs/qwen3_part_%j.err
+#SBATCH -o logs/qwen3_part_%j.out
+#SBATCH -e logs/qwen3_part_%j.err
 
 set -euo pipefail
 
 ROOT=${WM_LORA_ROOT:-$HOME/watermarkability_lora_msi}
-SOURCE_PARTITION=assets/source_qwen3_partition
 OUTPUT_PARTITION=assets/atomic16/qwen3-8b-lfqa5000-v1
 
 cd "$ROOT"
@@ -25,13 +23,10 @@ export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 
 test -f data/lfqa_prompts_5756.jsonl
-test -f "$SOURCE_PARTITION/bucket2_ids.npy"
-test -f "$SOURCE_PARTITION/banned_ids.npy"
 
 python build_atomic16_partition.py \
   --model-name Qwen/Qwen3-8B \
   --manifest data/lfqa_prompts_5756.jsonl \
-  --source-partition-dir "$SOURCE_PARTITION" \
   --output-dir "$OUTPUT_PARTITION" \
   --calibration-count 5000 \
   --validation-count 500 \

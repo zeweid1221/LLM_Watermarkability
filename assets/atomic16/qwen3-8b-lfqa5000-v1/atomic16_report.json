@@ -1,0 +1,40 @@
+{
+  "model_name": "Qwen/Qwen3-8B",
+  "manifest": "data/lfqa_prompts_5756.jsonl",
+  "calibration_contexts": 5000,
+  "validation_contexts": 500,
+  "num_atoms": 16,
+  "old_boundary_tokens_reintegrated": 150,
+  "banned_tokens": 14,
+  "calibration_metrics": {
+    "k2_mean_abs_mass_error": 0.11031924912454884,
+    "k2_p95_abs_mass_error": 0.3247228375186729,
+    "k2_min_mass": 2.745744667944615e-13,
+    "k4_mean_abs_mass_error": 0.09633731336700062,
+    "k4_p95_abs_mass_error": 0.24999930772488263,
+    "k4_min_mass": 9.117478848106846e-14,
+    "k8_mean_abs_mass_error": 0.0712070165202809,
+    "k8_p95_abs_mass_error": 0.19640211767258348,
+    "k8_min_mass": 1.3510620098546914e-14,
+    "k16_mean_abs_mass_error": 0.04787582384077071,
+    "k16_p95_abs_mass_error": 0.13635112342281874,
+    "k16_min_mass": 7.7704237840612475e-16
+  },
+  "validation_metrics": {
+    "k2_mean_abs_mass_error": 0.1096811256746553,
+    "k2_p95_abs_mass_error": 0.31558446865075707,
+    "k2_min_mass": 0.00031098047262659377,
+    "k4_mean_abs_mass_error": 0.09634287931410826,
+    "k4_p95_abs_mass_error": 0.2540495273072017,
+    "k4_min_mass": 1.1723045617293868e-06,
+    "k8_mean_abs_mass_error": 0.07223665109317075,
+    "k8_p95_abs_mass_error": 0.20586179532065643,
+    "k8_min_mass": 3.5163761846408333e-09,
+    "k16_mean_abs_mass_error": 0.048793772010309794,
+    "k16_p95_abs_mass_error": 0.1379804952531765,
+    "k16_min_mass": 5.224990879639379e-10
+  },
+  "runtime_seconds": 206.67057371139526,
+  "device": "cuda",
+  "gpu": "NVIDIA A100-SXM4-40GB"
+}

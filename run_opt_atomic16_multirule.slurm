@@ -1,19 +1,18 @@
 #!/bin/bash -l
-#SBATCH -A liyanxie
 #SBATCH -p a100-4
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=04:00:00
 #SBATCH -J wm_atom16_all
-#SBATCH -o /users/2/deng0379/watermarkability_lora_msi/logs/atom16_all_%j.out
-#SBATCH -e /users/2/deng0379/watermarkability_lora_msi/logs/atom16_all_%j.err
+#SBATCH -o logs/atom16_all_%j.out
+#SBATCH -e logs/atom16_all_%j.err
 
 set -euo pipefail
 
 ROOT=${WM_LORA_ROOT:-$HOME/watermarkability_lora_msi}
 PARTITION_DIR=assets/atomic16/opt-125m-lfqa5000-v1
-OUTPUT_DIR=outputs/opt125m_atomic16_universal_7rules_lfqa5000_each_rank16_epochs6_seed20260811
+OUTPUT_DIR=outputs/opt125m_atomic16_composition_pool_lfqa5000x4_rank16_epochs6_seed20260812
 RULES=ecc,binary,cw_abcd,unigram,atomic_kgw,atomic_kgw25,entropy_kgw
 
 cd "$ROOT"
@@ -54,7 +53,9 @@ python run_experiment.py \
   --training-targets-per-sequence 0 \
   --train-key-count 1 \
   --eval-key-count 1 \
-  --train-rules "$RULES" \
+  --training-protocol composition_pool \
+  --composition-cardinalities 2,4,7,8 \
+  --composition-repeats 4 \
   --eval-rules "$RULES" \
   --condition-summary-mode topk_contrast \
   --condition-top-k 128 \

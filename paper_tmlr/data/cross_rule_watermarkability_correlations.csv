@@ -1,0 +1,10 @@
+model,predictor,rule_points,pearson_r,spearman_rho
+Qwen/Qwen3-8B,empirical_watermarkability_at_tau,6,0.954549991448503,0.942857142857143
+Qwen/Qwen3-8B,mean_required_bias_at_tau,6,0.95262430531517,0.942857142857143
+Qwen/Qwen3-8B,mean_fixed_bias_kl,6,0.952423461031309,1.0
+facebook/opt-125m,empirical_watermarkability_at_tau,6,0.7410766627665808,0.6
+facebook/opt-125m,mean_required_bias_at_tau,6,0.7238437032328979,0.6
+facebook/opt-125m,mean_fixed_bias_kl,6,0.7408046429557612,0.6
+pooled,empirical_watermarkability_at_tau,12,0.9286305944357666,0.9300699300699302
+pooled,mean_required_bias_at_tau,12,0.8730631502914596,0.8391608391608393
+pooled,mean_fixed_bias_kl,12,0.9306056299553165,0.9370629370629372

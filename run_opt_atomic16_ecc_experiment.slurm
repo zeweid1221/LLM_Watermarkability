@@ -1,13 +1,12 @@
 #!/bin/bash -l
-#SBATCH -A liyanxie
 #SBATCH -p a100-4
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=02:00:00
 #SBATCH -J wm_atom16_ecc
-#SBATCH -o /users/2/deng0379/watermarkability_lora_msi/logs/atom16_ecc_%j.out
-#SBATCH -e /users/2/deng0379/watermarkability_lora_msi/logs/atom16_ecc_%j.err
+#SBATCH -o logs/atom16_ecc_%j.out
+#SBATCH -e logs/atom16_ecc_%j.err
 
 set -euo pipefail
 
@@ -27,6 +26,7 @@ export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface}
 test -f "$PARTITION_DIR/watermark_compositions.json"
 
 python run_experiment.py \
+  --training-protocol schedule_pool \
   --manifest data/lfqa_prompts_5756.jsonl \
   --partition-dir "$PARTITION_DIR" \
   --output-dir "$OUTPUT_DIR" \

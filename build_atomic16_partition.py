@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import itertools
 import json
 import sys
@@ -24,6 +23,7 @@ from watermarkability.partition_optimizer import (  # noqa: E402
     PartitionOptimizationConfig,
     evaluate_leaf_masses,
 )
+from reproducibility import tokenizer_identity  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,7 +34,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", default="data/lfqa_prompts_5756.jsonl")
     parser.add_argument(
         "--source-partition-dir",
-        default="../outputs/paper_results_archive_v2_20260806/partitions/opt-125m-semantic-v1",
+        default=None,
+        help=(
+            "Optional legacy partition whose banned-token list is retained. "
+            "The atomic partition can be built without another repository."
+        ),
     )
     parser.add_argument("--output-dir", default="assets/atomic16/opt-125m")
     parser.add_argument("--calibration-count", type=int, default=5000)
@@ -105,9 +109,22 @@ def collect_last_logits(
         )
         encoded = {name: value.to(device) for name, value in encoded.items()}
         outputs = model(**encoded, use_cache=False, return_dict=True)
-        lengths = encoded["attention_mask"].sum(dim=1).long()
+        positions = torch.arange(
+            encoded["attention_mask"].shape[1], device=device
+        ).unsqueeze(0)
+        last_attended = positions.masked_fill(
+            encoded["attention_mask"] == 0, -1
+        ).max(dim=1).values
+        if bool((last_attended < 0).any()):
+            raise ValueError("Tokenizer produced an empty calibration prompt.")
         row_ids = torch.arange(len(batch), device=device)
-        logits = outputs.logits[row_ids, lengths - 1].float().cpu().numpy().astype(np.float16)
+        logits = (
+            outputs.logits[row_ids, last_attended]
+            .float()
+            .cpu()
+            .numpy()
+            .astype(np.float16)
+        )
         rows.append(logits)
         del outputs
     return np.concatenate(rows, axis=0)
@@ -122,22 +139,30 @@ def logits_to_probabilities(logits: np.ndarray, batch_size: int) -> np.ndarray:
     return probabilities
 
 
-def tokenizer_identity(tokenizer) -> dict[str, object]:
-    digest = hashlib.sha256()
-    vocab_items = sorted(
-        ((int(token_id), str(token)) for token, token_id in tokenizer.get_vocab().items()),
-        key=lambda item: (item[0], item[1]),
+def derive_banned_ids(
+    tokenizer,
+    embedding_vocab_size: int,
+    source_banned_ids: np.ndarray | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    source = (
+        np.asarray(source_banned_ids, dtype=np.int64)
+        if source_banned_ids is not None
+        else np.asarray([], dtype=np.int64)
     )
-    for token_id, token in vocab_items:
-        digest.update(token_id.to_bytes(8, byteorder="little", signed=False))
-        digest.update(token.encode("utf-8", errors="surrogatepass"))
-        digest.update(b"\0")
-    return {
-        "tokenizer_name_or_path": str(tokenizer.name_or_path),
-        "tokenizer_class": tokenizer.__class__.__name__,
-        "tokenizer_vocab_size": len(tokenizer),
-        "tokenizer_vocab_sha256": digest.hexdigest(),
-    }
+    special = np.asarray(
+        [
+            int(token_id)
+            for token_id in tokenizer.all_special_ids
+            if 0 <= int(token_id) < int(embedding_vocab_size)
+        ],
+        dtype=np.int64,
+    )
+    padded = np.arange(
+        min(len(tokenizer), int(embedding_vocab_size)),
+        int(embedding_vocab_size),
+        dtype=np.int64,
+    )
+    return np.unique(np.concatenate([source, special, padded])), special, padded
 
 
 def atom_masses(
@@ -256,7 +281,9 @@ def main() -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     manifest_path = resolve_path(args.manifest)
-    source_partition_path = resolve_path(args.source_partition_dir)
+    source_partition_path = (
+        resolve_path(args.source_partition_dir) if args.source_partition_dir else None
+    )
     output_dir = resolve_path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -307,13 +334,27 @@ def main() -> None:
     )
     del calibration_logits, validation_logits
 
-    boundary_path = source_partition_path / "boundary_ids.npy"
-    if not boundary_path.exists():
-        boundary_path = source_partition_path / "bucket2_ids.npy"
-    old_boundary_ids = np.load(boundary_path, allow_pickle=False).astype(np.int64)
-    source_banned_ids = np.load(
-        source_partition_path / "banned_ids.npy", allow_pickle=False
-    ).astype(np.int64)
+    old_boundary_ids = np.asarray([], dtype=np.int64)
+    source_banned_ids = np.asarray([], dtype=np.int64)
+    if source_partition_path is not None:
+        boundary_path = source_partition_path / "boundary_ids.npy"
+        if not boundary_path.exists():
+            boundary_path = source_partition_path / "bucket2_ids.npy"
+        if boundary_path.exists():
+            old_boundary_ids = np.load(
+                boundary_path, allow_pickle=False
+            ).astype(np.int64)
+        banned_path = source_partition_path / "banned_ids.npy"
+        if banned_path.exists():
+            source_banned_ids = np.load(
+                banned_path, allow_pickle=False
+            ).astype(np.int64)
+
+    banned_ids, tokenizer_special_ids, padded_output_ids = derive_banned_ids(
+        tokenizer,
+        int(embedding_matrix.shape[0]),
+        source_banned_ids,
+    )
     config = PartitionOptimizationConfig(
         num_leaves=16,
         frontiers=(2, 4, 8, 16),
@@ -330,7 +371,7 @@ def main() -> None:
         calibration_probabilities,
         embedding_matrix,
         boundary_ids=(),
-        banned_ids=source_banned_ids,
+        banned_ids=banned_ids,
         device=str(device),
         metadata={
             "partition_version": "model_specific_atomic16_v1",
@@ -339,6 +380,11 @@ def main() -> None:
             "calibration_split": "train",
             "validation_split": "validation",
             "old_boundary_tokens_reintegrated": len(old_boundary_ids),
+            "source_partition_dir": (
+                str(source_partition_path) if source_partition_path is not None else None
+            ),
+            "special_tokens_banned": int(tokenizer_special_ids.size),
+            "padded_output_rows_banned": int(padded_output_ids.size),
             **tokenizer_identity(tokenizer),
         },
     )

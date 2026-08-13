@@ -1,0 +1,40 @@
+{
+  "model_name": "facebook/opt-125m",
+  "manifest": "data/lfqa_prompts_5756.jsonl",
+  "calibration_contexts": 5000,
+  "validation_contexts": 500,
+  "num_atoms": 16,
+  "old_boundary_tokens_reintegrated": 150,
+  "banned_tokens": 2,
+  "calibration_metrics": {
+    "k2_mean_abs_mass_error": 0.14458703235377915,
+    "k2_p95_abs_mass_error": 0.3476089061150343,
+    "k2_min_mass": 0.00013912065259711056,
+    "k4_mean_abs_mass_error": 0.1518962599007659,
+    "k4_p95_abs_mass_error": 0.4053835454901276,
+    "k4_min_mass": 2.0110536495392984e-05,
+    "k8_mean_abs_mass_error": 0.10736339600860371,
+    "k8_p95_abs_mass_error": 0.4316308931343223,
+    "k8_min_mass": 6.646977798444818e-06,
+    "k16_mean_abs_mass_error": 0.0643489798396032,
+    "k16_p95_abs_mass_error": 0.29581569679822217,
+    "k16_min_mass": 1.677338055409664e-06
+  },
+  "validation_metrics": {
+    "k2_mean_abs_mass_error": 0.14781470906660643,
+    "k2_p95_abs_mass_error": 0.36533739383371416,
+    "k2_min_mass": 0.001097104288134696,
+    "k4_mean_abs_mass_error": 0.15046067952992428,
+    "k4_p95_abs_mass_error": 0.4093135501542412,
+    "k4_min_mass": 0.00020453045065121103,
+    "k8_mean_abs_mass_error": 0.1063170725686293,
+    "k8_p95_abs_mass_error": 0.42394309443923134,
+    "k8_min_mass": 6.969454070376392e-05,
+    "k16_mean_abs_mass_error": 0.06366801184401792,
+    "k16_p95_abs_mass_error": 0.2742691226640914,
+    "k16_min_mass": 3.1159699206300475e-05
+  },
+  "runtime_seconds": 52.06008195877075,
+  "device": "cuda",
+  "gpu": "NVIDIA A100-SXM4-40GB"
+}

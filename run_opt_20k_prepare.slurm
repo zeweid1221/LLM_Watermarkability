@@ -1,5 +1,4 @@
 #!/bin/bash -l
-#SBATCH -A liyanxie
 #SBATCH -p a100-4
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
@@ -18,6 +17,7 @@ export TOKENIZERS_PARALLELISM=false
 export HF_HOME=${HF_HOME:-$HOME/.cache/huggingface}
 
 python run_experiment.py \
+  --training-protocol schedule_pool \
   --manifest data/mixed_prompts_22256.jsonl \
   --partition-dir assets/opt_hierarchy \
   --output-dir outputs/opt125m_lora_20k_shared \

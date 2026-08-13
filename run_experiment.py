@@ -22,7 +22,18 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from modeling import (
     TargetConditionedLoRA,
     apply_closed_form_residual,
+    target_geometry_features,
     topk_contrast_summaries,
+)
+from reproducibility import (
+    array_sha256,
+    canonical_json,
+    encode_prompt,
+    files_sha256,
+    sha256_file,
+    text_sequence_sha256,
+    tokenizer_identity,
+    validate_tokenizer_identity,
 )
 from targets import (
     RULE_ECC,
@@ -31,6 +42,7 @@ from targets import (
     RULE_ATOMIC_KGW25,
     RULE_ENTROPY_KGW,
     RULE_UNIGRAM,
+    COMPOSITION_CARDINALITY_BY_RULE,
     DYNAMIC_RULE_IDS,
     RULE_IDS,
     RULE_NAMES,
@@ -38,13 +50,16 @@ from targets import (
     TargetRegistry,
     kgw_row_seed,
     make_fixed_ecc_schedule,
+    make_composition_curriculum,
     make_rule_schedule,
     make_rule_assignments,
 )
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the isolated OPT-125M conditional-LoRA diagnostic.")
+    parser = argparse.ArgumentParser(
+        description="Train and evaluate the target-conditioned watermarkability adapter."
+    )
     parser.add_argument("--manifest", default="data/mixed_prompts_5756.jsonl")
     parser.add_argument("--partition-dir", default="assets/opt_hierarchy")
     parser.add_argument("--output-dir", default="outputs/opt125m_lora_5k_seed20260810")
@@ -76,6 +91,14 @@ def parse_args() -> argparse.Namespace:
         default="ecc",
         help="Comma-separated rules; each receives the full train/validation set.",
     )
+    parser.add_argument(
+        "--training-protocol",
+        choices=("composition_pool", "schedule_pool"),
+        default="composition_pool",
+        help="Train on generic atom unions or reproduce the legacy schedule-pooled protocol.",
+    )
+    parser.add_argument("--composition-cardinalities", default="2,4,7,8")
+    parser.add_argument("--composition-repeats", type=int, default=4)
     parser.add_argument("--eval-rules", default="ecc")
     parser.add_argument(
         "--condition-summary-mode",
@@ -83,6 +106,24 @@ def parse_args() -> argparse.Namespace:
         default="registry_mean",
     )
     parser.add_argument("--condition-top-k", type=int, default=128)
+    parser.add_argument(
+        "--condition-feature-mode",
+        choices=("none", "geometry"),
+        default="none",
+        help="Optionally append rule-agnostic target geometry features.",
+    )
+    parser.add_argument(
+        "--objective-aggregation",
+        choices=("token_micro", "rule_macro"),
+        default="token_micro",
+        help="Aggregate active-token losses globally or equally across rules.",
+    )
+    parser.add_argument(
+        "--ecc-boundary-loss-weight",
+        type=float,
+        default=1.0,
+        help="Relative loss weight for ECC boundary positions (target code 3).",
+    )
     parser.add_argument("--kgw-seed-count", type=int, default=1)
     parser.add_argument("--kgw-seed-offset", type=int, default=3779)
     parser.add_argument(
@@ -112,13 +153,105 @@ def stable_int(*parts: object) -> int:
 
 def load_manifest(path: Path) -> dict[str, list[dict[str, object]]]:
     splits = {"train": [], "validation": [], "test": []}
+    seen_prompts: dict[str, tuple[str, int]] = {}
     with path.open("r", encoding="utf-8") as handle:
-        for line in handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
             row = json.loads(line)
+            if "split" not in row or "prompt" not in row:
+                raise ValueError(
+                    f"Manifest row {line_number} must contain split and prompt."
+                )
             split = str(row["split"])
-            if split in splits:
-                splits[split].append(row)
+            if split not in splits:
+                raise ValueError(
+                    f"Manifest row {line_number} has unknown split {split!r}."
+                )
+            prompt = str(row["prompt"]).strip()
+            if not prompt:
+                raise ValueError(f"Manifest row {line_number} has an empty prompt.")
+            prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+            if prompt_hash in seen_prompts:
+                previous_split, previous_line = seen_prompts[prompt_hash]
+                raise ValueError(
+                    "Duplicate prompt across manifest rows "
+                    f"{previous_line} ({previous_split}) and {line_number} ({split})."
+                )
+            seen_prompts[prompt_hash] = (split, line_number)
+            row["prompt"] = prompt
+            splits[split].append(row)
     return splits
+
+
+def trajectory_cache_metadata(
+    *,
+    prompts: Sequence[str],
+    key_indices: np.ndarray,
+    target_codes: np.ndarray,
+    rule_ids: np.ndarray,
+    preset_mask_indices: np.ndarray | None,
+    manifest_path: Path,
+    partition_path: Path,
+    tokenizer,
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    partition_files = [
+        "leaf_ids.npy",
+        "semantic_group_ids.npy",
+        "boundary_ids.npy",
+        "banned_ids.npy",
+        "hierarchy_config.json",
+        "watermark_compositions.json",
+    ]
+    partition_files = [
+        name for name in partition_files if (partition_path / name).is_file()
+    ]
+    return {
+        "format_version": "trajectory-cache-v2-special-token-prompts",
+        "model_name": str(args.model_name),
+        "tokenizer": tokenizer_identity(tokenizer),
+        "manifest_sha256": sha256_file(manifest_path),
+        "partition_sha256": files_sha256(partition_path, partition_files),
+        "prompts_sha256": text_sequence_sha256(prompts),
+        "key_indices_sha256": array_sha256(key_indices),
+        "target_codes_sha256": array_sha256(target_codes),
+        "rule_ids_sha256": array_sha256(rule_ids),
+        "preset_mask_indices_sha256": (
+            array_sha256(preset_mask_indices)
+            if preset_mask_indices is not None
+            else None
+        ),
+        "generated_tokens": int(args.generated_tokens),
+        "max_prompt_tokens": int(args.max_prompt_tokens),
+        "temperature": float(args.temperature),
+        "kgw_seed_count": int(args.kgw_seed_count),
+        "kgw_seed_offset": int(args.kgw_seed_offset),
+        "entropy_gate_threshold": float(args.entropy_gate_threshold),
+        "seed": int(args.seed),
+        "training_protocol": str(args.training_protocol),
+    }
+
+
+def validate_trajectory_cache_metadata(
+    cache: np.lib.npyio.NpzFile, expected: dict[str, object]
+) -> None:
+    if "metadata_json" not in cache.files:
+        raise ValueError(
+            "Trajectory cache has no reproducibility metadata. Rebuild it without "
+            "--skip-prepare."
+        )
+    actual = json.loads(str(cache["metadata_json"].item()))
+    if canonical_json(actual) != canonical_json(expected):
+        changed = sorted(
+            key
+            for key in set(actual) | set(expected)
+            if actual.get(key) != expected.get(key)
+        )
+        raise ValueError(
+            "Trajectory cache does not match this run configuration; changed "
+            f"fields: {changed}. Rebuild it without --skip-prepare."
+        )
 
 
 def write_csv(path: Path, rows: Sequence[dict[str, object]]) -> None:
@@ -141,6 +274,47 @@ def parse_rule_names(value: str, *, option: str) -> list[str]:
     if len(names) != len(set(names)):
         raise ValueError(f"{option} contains duplicate rules: {names}")
     return names
+
+
+def parse_cardinalities(value: str) -> list[int]:
+    cardinalities = [int(item.strip()) for item in str(value).split(",") if item.strip()]
+    unknown = sorted(set(cardinalities) - set(COMPOSITION_CARDINALITY_BY_RULE.values()))
+    if unknown or not cardinalities:
+        raise ValueError(
+            "--composition-cardinalities must be a nonempty subset of 2,4,7,8; "
+            f"received {cardinalities}."
+        )
+    if len(cardinalities) != len(set(cardinalities)):
+        raise ValueError("--composition-cardinalities contains duplicates.")
+    return cardinalities
+
+
+def composition_coverage_report(
+    rule_ids: np.ndarray,
+    combination_indices: np.ndarray,
+    *,
+    num_atoms: int,
+) -> list[dict[str, int | float]]:
+    rows: list[dict[str, int | float]] = []
+    for rule_id, cardinality in sorted(
+        COMPOSITION_CARDINALITY_BY_RULE.items(), key=lambda item: item[1]
+    ):
+        selected = np.asarray(rule_ids) == int(rule_id)
+        if not bool(selected.any()):
+            continue
+        observed = int(np.unique(np.asarray(combination_indices)[selected]).size)
+        possible = int(math.comb(int(num_atoms), int(cardinality)))
+        rows.append(
+            {
+                "cardinality": int(cardinality),
+                "sequences": int(selected.sum()),
+                "positions": int(selected.sum() * combination_indices.shape[1]),
+                "observed_unions": observed,
+                "possible_unions": possible,
+                "coverage": observed / possible,
+            }
+        )
+    return rows
 
 
 def expand_rule_targets(
@@ -207,6 +381,7 @@ def prepare_trajectories(
     key_indices: np.ndarray,
     target_codes: np.ndarray,
     rule_ids: np.ndarray,
+    preset_mask_indices: np.ndarray | None,
     *,
     max_prompt_tokens: int,
     batch_size: int,
@@ -219,7 +394,13 @@ def prepare_trajectories(
 ) -> tuple[np.ndarray, np.ndarray]:
     generated_tokens = int(target_codes.shape[1])
     generated = np.empty((len(prompts), generated_tokens), dtype=np.int32)
-    kgw_seeds = np.full((len(prompts), generated_tokens), -1, dtype=np.int64)
+    kgw_seeds = (
+        np.asarray(preset_mask_indices, dtype=np.int64).copy()
+        if preset_mask_indices is not None
+        else np.full((len(prompts), generated_tokens), -1, dtype=np.int64)
+    )
+    if kgw_seeds.shape != target_codes.shape:
+        raise ValueError("Preset mask indices must match target_codes shape.")
     model.eval()
     tokenizer.padding_side = "left"
     generator = torch.Generator(device=device).manual_seed(int(seed))
@@ -253,7 +434,7 @@ def prepare_trajectories(
                 step_codes[inactive] = -1
                 target_codes[start:stop, position] = step_codes
             codes = torch.from_numpy(step_codes)
-            position_seeds = np.full(stop - start, -1, dtype=np.int64)
+            position_seeds = kgw_seeds[start:stop, position].copy()
             for local_row in range(stop - start):
                 if int(batch_rules[local_row]) not in DYNAMIC_RULE_IDS or int(codes[local_row]) < 0:
                     continue
@@ -311,7 +492,7 @@ class TrajectoryDataset(Dataset):
         max_prompt_tokens: int,
     ):
         self.prompt_ids = [
-            tokenizer.encode(prompt, add_special_tokens=False, truncation=True, max_length=max_prompt_tokens)
+            encode_prompt(tokenizer, prompt, max_length=max_prompt_tokens)
             for prompt in prompts
         ]
         self.generated_ids = generated_ids
@@ -319,13 +500,12 @@ class TrajectoryDataset(Dataset):
         self.target_codes = target_codes
         self.rule_ids = rule_ids
         self.kgw_seeds = kgw_seeds
-        self.eos_token_id = int(tokenizer.eos_token_id)
 
     def __len__(self) -> int:
         return len(self.prompt_ids)
 
     def __getitem__(self, index: int):
-        prompt = self.prompt_ids[index] or [self.eos_token_id]
+        prompt = self.prompt_ids[index]
         return (
             prompt,
             self.generated_ids[index].astype(np.int64),
@@ -417,8 +597,9 @@ def build_condition_tensor(
     *,
     summary_mode: str,
     condition_top_k: int,
+    condition_feature_mode: str,
     device: torch.device,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
     summaries = torch.zeros(
         (*target_codes.shape, registry.summaries.shape[-1]), dtype=torch.float32, device=device
     )
@@ -450,7 +631,52 @@ def build_condition_tensor(
     else:
         raise ValueError(f"Unknown condition summary mode: {summary_mode}")
     summaries[active] = active_summaries
-    return active, summaries, masks
+    features = None
+    if condition_feature_mode == "geometry":
+        active_features = target_geometry_features(
+            base_logits,
+            masks,
+        )
+        features = torch.zeros(
+            (*target_codes.shape, active_features.shape[-1]),
+            dtype=torch.float32,
+            device=device,
+        )
+        features[active] = active_features
+    elif condition_feature_mode != "none":
+        raise ValueError(
+            f"Unknown condition feature mode: {condition_feature_mode}"
+        )
+    return active, summaries, masks, features
+
+
+def aggregate_active_loss(
+    values: torch.Tensor,
+    rule_ids: torch.Tensor,
+    target_codes: torch.Tensor,
+    *,
+    aggregation: str,
+    ecc_boundary_weight: float,
+) -> torch.Tensor:
+    """Aggregate per-position losses while preserving legacy defaults."""
+    if values.ndim != 1 or rule_ids.shape != values.shape or target_codes.shape != values.shape:
+        raise ValueError("Active loss values and descriptors must be one-dimensional.")
+    weights = torch.ones_like(values)
+    boundary = (rule_ids == RULE_ECC) & (target_codes == 3)
+    weights[boundary] = float(ecc_boundary_weight)
+    if bool((weights <= 0).any()):
+        raise ValueError("Loss weights must be positive.")
+    if aggregation == "token_micro":
+        return (values * weights).sum() / weights.sum()
+    if aggregation == "rule_macro":
+        per_rule = []
+        for rule_id in torch.unique(rule_ids).tolist():
+            selected = rule_ids == int(rule_id)
+            per_rule.append(
+                (values[selected] * weights[selected]).sum() / weights[selected].sum()
+            )
+        return torch.stack(per_rule).mean()
+    raise ValueError(f"Unknown objective aggregation: {aggregation}")
 
 
 def batch_objective(
@@ -482,7 +708,7 @@ def batch_objective(
             return_dict=True,
         )
         base_logits = base_outputs.logits[active].float()
-    active, summaries, masks = build_condition_tensor(
+    active, summaries, masks, features = build_condition_tensor(
         registry,
         target_codes,
         key_indices,
@@ -493,12 +719,14 @@ def batch_objective(
         model.base_model.get_input_embeddings().weight,
         summary_mode=args.condition_summary_mode,
         condition_top_k=args.condition_top_k,
+        condition_feature_mode=getattr(args, "condition_feature_mode", "none"),
         device=device,
     )
     adapted_outputs = model(
         input_ids=input_ids,
         attention_mask=attention,
         target_summaries=summaries,
+        target_features=features,
         use_adapters=True,
         use_cache=False,
         return_dict=True,
@@ -510,13 +738,28 @@ def batch_objective(
         masks,
         target_adherence=args.target_adherence,
     )
-    nll = F.cross_entropy(residual.controlled_logits, active_labels)
+    per_token_nll = F.cross_entropy(
+        residual.controlled_logits, active_labels, reduction="none"
+    )
     adapted_log_probs = F.log_softmax(adapted_logits, dim=-1)
     adapted_probs = adapted_log_probs.exp()
     base_log_probs = F.log_softmax(base_logits, dim=-1)
-    conditional_kl = (adapted_probs * (adapted_log_probs - base_log_probs)).sum(dim=-1).mean()
-    residual_loss = residual.residual_bias.square().mean()
-    target_mass_loss = -residual.native_mass.log().mean()
+    per_token_kl = (adapted_probs * (adapted_log_probs - base_log_probs)).sum(dim=-1)
+    per_token_residual = residual.residual_bias.square()
+    per_token_target_mass = -residual.native_mass.log()
+    active_rules = rule_ids[active].long()
+    active_codes = target_codes[active].long()
+    aggregate = lambda values: aggregate_active_loss(
+        values,
+        active_rules,
+        active_codes,
+        aggregation=getattr(args, "objective_aggregation", "token_micro"),
+        ecc_boundary_weight=getattr(args, "ecc_boundary_loss_weight", 1.0),
+    )
+    nll = aggregate(per_token_nll)
+    conditional_kl = aggregate(per_token_kl)
+    residual_loss = aggregate(per_token_residual)
+    target_mass_loss = aggregate(per_token_target_mass)
     loss = (
         nll
         + args.residual_loss_weight * residual_loss
@@ -531,6 +774,25 @@ def batch_objective(
         "conditional_kl": float(conditional_kl.detach()),
         "native_target_mass": float(residual.native_mass.mean().detach()),
         "mean_residual_bias": float(residual.residual_bias.mean().detach()),
+        "metric_weight": float(per_token_nll.numel()),
+    }
+
+
+def weighted_metrics(rows: Sequence[dict[str, float]]) -> dict[str, float]:
+    if not rows:
+        raise ValueError("Cannot aggregate an empty metric list.")
+    weights = np.asarray([row["metric_weight"] for row in rows], dtype=np.float64)
+    if not bool(np.isfinite(weights).all()) or float(weights.sum()) <= 0.0:
+        raise ValueError("Metric weights must be finite and positive in aggregate.")
+    return {
+        name: float(
+            np.average(
+                np.asarray([row[name] for row in rows], dtype=np.float64),
+                weights=weights,
+            )
+        )
+        for name in rows[0]
+        if name != "metric_weight"
     }
 
 
@@ -547,7 +809,7 @@ def validate(
     for batch in loader:
         _, metrics = batch_objective(model, registry, batch, args, device)
         rows.append(metrics)
-    return {name: float(np.mean([row[name] for row in rows])) for name in rows[0]}
+    return weighted_metrics(rows)
 
 
 def train_adapter(
@@ -590,7 +852,12 @@ def train_adapter(
                 )
         validation = validate(model, registry, validation_loader, args, device)
         row: dict[str, object] = {"epoch": epoch}
-        row.update({f"train_{name}": float(np.mean([item[name] for item in running])) for name in running[0]})
+        row.update(
+            {
+                f"train_{name}": value
+                for name, value in weighted_metrics(running).items()
+            }
+        )
         row.update({f"validation_{name}": value for name, value in validation.items()})
         history.append(row)
         print(json.dumps(row, indent=2), flush=True)
@@ -604,8 +871,16 @@ def train_adapter(
 
 def load_adapter(model: TargetConditionedLoRA, path: Path) -> None:
     state = torch.load(path, map_location="cpu", weights_only=True)
+    expected = set(model.adapter_state_dict())
+    supplied = set(state)
+    missing_adapter = sorted(expected - supplied)
+    unexpected_adapter = sorted(supplied - expected)
+    if missing_adapter or unexpected_adapter:
+        raise RuntimeError(
+            "Adapter checkpoint keys do not match this architecture. "
+            f"Missing={missing_adapter}; unexpected={unexpected_adapter}."
+        )
     missing, unexpected = model.load_state_dict(state, strict=False)
-    unexpected = [name for name in unexpected if "base_model" not in name]
     if unexpected:
         raise RuntimeError(f"Unexpected adapter keys: {unexpected}")
     if not any("base_model" in name for name in missing):
@@ -690,8 +965,7 @@ def generate_mode(
         input_ids = encoded["input_ids"].to(device)
         attention = encoded["attention_mask"].to(device)
         prompt_token_lists = [
-            tokenizer.encode(prompt, add_special_tokens=True, truncation=True, max_length=args.max_prompt_tokens)
-            or [tokenizer.eos_token_id]
+            encode_prompt(tokenizer, prompt, max_length=args.max_prompt_tokens)
             for prompt in batch_prompts
         ]
         batch_keys = torch.from_numpy(key_indices[start:stop].astype(np.int64))
@@ -766,6 +1040,22 @@ def generate_mode(
                         model.base_model.get_input_embeddings().weight,
                         top_k=args.condition_top_k,
                     )
+                target_feature_tensor = None
+                if getattr(args, "condition_feature_mode", "none") == "geometry":
+                    target_features = torch.zeros(
+                        (stop - start, 3), dtype=torch.float32, device=device
+                    )
+                    if bool(active_rows.any()):
+                        target_features[active_device] = target_geometry_features(
+                            base_outputs.logits[active_device, -1, :].float(),
+                            target_mask[active_device],
+                        )
+                    target_feature_tensor = torch.zeros(
+                        (*current_ids.shape, 3),
+                        dtype=torch.float32,
+                        device=device,
+                    )
+                    target_feature_tensor[:, -1, :] = target_features
                 summaries = torch.zeros(
                     (*current_ids.shape, target_summary.shape[-1]),
                     dtype=torch.float32,
@@ -776,6 +1066,7 @@ def generate_mode(
                     input_ids=current_ids,
                     attention_mask=current_attention,
                     target_summaries=summaries,
+                    target_features=target_feature_tensor,
                     use_adapters=True,
                     past_key_values=past,
                     use_cache=True,
@@ -833,6 +1124,8 @@ def generate_mode(
                 controlled_logits = logits
             else:
                 raise ValueError(f"Unknown generation mode: {mode}")
+            if len(tokenizer) < controlled_logits.shape[-1]:
+                controlled_logits[:, len(tokenizer) :] = -torch.inf
             next_tokens = sample_logits(
                 controlled_logits,
                 args.temperature,
@@ -957,12 +1250,18 @@ def main() -> None:
     args = parse_args()
     train_rules = parse_rule_names(args.train_rules, option="--train-rules")
     eval_rules = parse_rule_names(args.eval_rules, option="--eval-rules")
-    if args.kgw_train_fraction > 0 and train_rules != ["ecc"]:
+    composition_cardinalities = parse_cardinalities(args.composition_cardinalities)
+    if (
+        args.training_protocol == "schedule_pool"
+        and args.kgw_train_fraction > 0
+        and train_rules != ["ecc"]
+    ):
         raise ValueError(
             "Legacy --kgw-train-fraction cannot be combined with explicit mixed --train-rules."
         )
     if (
-        args.kgw_train_fraction > 0
+        args.training_protocol == "composition_pool"
+        or args.kgw_train_fraction > 0
         or any(rule != "ecc" for rule in train_rules + eval_rules)
     ) and args.condition_summary_mode != "topk_contrast":
         raise ValueError(
@@ -1001,12 +1300,26 @@ def main() -> None:
         rank=args.lora_rank,
         alpha=args.lora_alpha,
         dropout=args.lora_dropout,
+        condition_feature_dim=(
+            3 if args.condition_feature_mode == "geometry" else 0
+        ),
     ).to(device)
     partition = Partition.load(partition_path)
     model_vocab_size = int(base_model.get_output_embeddings().weight.shape[0])
     if partition.vocab_size != model_vocab_size:
         raise ValueError(
             f"Partition vocab {partition.vocab_size} != model output vocab {model_vocab_size}."
+        )
+    validate_tokenizer_identity(
+        partition.metadata, tokenizer, context=f"Partition {partition_path}"
+    )
+    partition_model_name = partition.metadata.get("model_name")
+    if partition_model_name is not None and str(partition_model_name) != str(
+        args.model_name
+    ):
+        raise ValueError(
+            f"Partition model_name={partition_model_name!r} does not match "
+            f"--model-name={args.model_name!r}."
         )
     # OPT pads its embedding/output matrix beyond the tokenizer vocabulary.
     # Those rows must never become payload or boundary candidates.
@@ -1020,10 +1333,63 @@ def main() -> None:
     eval_keys = [900000 + index for index in range(args.eval_key_count)]
     all_keys = train_keys + eval_keys
     registry = TargetRegistry(partition, all_keys, base_model.get_input_embeddings().weight)
+    uses_ecc = "ecc" in eval_rules or (
+        args.training_protocol != "composition_pool" and "ecc" in train_rules
+    )
+    if uses_ecc and not partition.boundary_ids.size:
+        raise ValueError("ECC requires a nonempty boundary-token set.")
 
     base_train_prompts = [str(row["prompt"]) for row in splits["train"]]
     base_validation_prompts = [str(row["prompt"]) for row in splits["validation"]]
-    if args.kgw_train_fraction > 0:
+    train_preset_mask_indices = None
+    validation_preset_mask_indices = None
+    if args.training_protocol == "composition_pool":
+        if args.kgw_train_fraction > 0:
+            raise ValueError(
+                "--kgw-train-fraction is incompatible with --training-protocol composition_pool."
+            )
+        (
+            train_prompts,
+            train_key_indices,
+            train_target_codes,
+            train_rule_ids,
+            train_preset_mask_indices,
+        ) = make_composition_curriculum(
+            base_train_prompts,
+            repeats=args.composition_repeats,
+            generated_tokens=args.generated_tokens,
+            cardinalities=composition_cardinalities,
+            num_atoms=partition.num_leaves,
+        )
+        (
+            validation_prompts,
+            validation_key_indices,
+            validation_target_codes,
+            validation_rule_ids,
+            validation_preset_mask_indices,
+        ) = make_composition_curriculum(
+            base_validation_prompts,
+            repeats=args.composition_repeats,
+            generated_tokens=args.generated_tokens,
+            cardinalities=composition_cardinalities,
+            num_atoms=partition.num_leaves,
+        )
+        coverage = {
+            "train": composition_coverage_report(
+                train_rule_ids,
+                train_preset_mask_indices,
+                num_atoms=partition.num_leaves,
+            ),
+            "validation": composition_coverage_report(
+                validation_rule_ids,
+                validation_preset_mask_indices,
+                num_atoms=partition.num_leaves,
+            ),
+        }
+        (output_dir / "composition_coverage.json").write_text(
+            json.dumps(coverage, indent=2), encoding="utf-8"
+        )
+    elif args.kgw_train_fraction > 0:
         train_prompts = base_train_prompts
         validation_prompts = base_validation_prompts
         train_key_indices, train_target_codes = make_fixed_ecc_schedule(
@@ -1078,8 +1444,8 @@ def main() -> None:
         else output_dir / "trajectory_cache.npz"
     )
     history: list[dict[str, object]] = []
-    if not args.eval_only and not args.skip_prepare:
-        trajectory_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_metadata: dict[str, object] | None = None
+    if not args.eval_only:
         prepare_prompts = train_prompts + validation_prompts
         key_indices = np.concatenate(
             [train_key_indices, validation_key_indices], axis=0
@@ -1090,6 +1456,27 @@ def main() -> None:
         rule_ids = np.concatenate(
             [train_rule_ids, validation_rule_ids], axis=0
         )
+        preset_mask_indices = (
+            np.concatenate(
+                [train_preset_mask_indices, validation_preset_mask_indices], axis=0
+            )
+            if train_preset_mask_indices is not None
+            and validation_preset_mask_indices is not None
+            else None
+        )
+        cache_metadata = trajectory_cache_metadata(
+            prompts=prepare_prompts,
+            key_indices=key_indices,
+            target_codes=target_codes,
+            rule_ids=rule_ids,
+            preset_mask_indices=preset_mask_indices,
+            manifest_path=manifest_path,
+            partition_path=partition_path,
+            tokenizer=tokenizer,
+            args=args,
+        )
+    if not args.eval_only and not args.skip_prepare:
+        trajectory_path.parent.mkdir(parents=True, exist_ok=True)
         generated_ids, kgw_seeds = prepare_trajectories(
             model,
             tokenizer,
@@ -1098,6 +1485,7 @@ def main() -> None:
             key_indices,
             target_codes,
             rule_ids,
+            preset_mask_indices,
             max_prompt_tokens=args.max_prompt_tokens,
             batch_size=args.trajectory_batch_size,
             temperature=args.temperature,
@@ -1114,6 +1502,7 @@ def main() -> None:
             target_codes=target_codes,
             rule_ids=rule_ids,
             kgw_seeds=kgw_seeds,
+            metadata_json=np.asarray(canonical_json(cache_metadata)),
         )
     if args.prepare_only:
         return
@@ -1128,6 +1517,9 @@ def main() -> None:
         if not trajectory_path.exists():
             raise FileNotFoundError(f"Missing trajectory cache: {trajectory_path}")
         cache = np.load(trajectory_path, allow_pickle=False)
+        if cache_metadata is None:
+            raise RuntimeError("Internal error: missing expected cache metadata.")
+        validate_trajectory_cache_metadata(cache, cache_metadata)
         if args.kgw_train_fraction > 0 and "rule_ids" not in cache.files:
             raise ValueError(
                 "The selected trajectory cache predates dynamic targets. "
@@ -1227,12 +1619,30 @@ def main() -> None:
     runtime = time.time() - started
     config = {
         **vars(args),
-        "resolved_train_rules": train_rules,
+        "resolved_train_rules": (
+            [] if args.training_protocol == "composition_pool" else train_rules
+        ),
+        "training_protocol": args.training_protocol,
+        "composition_cardinalities": composition_cardinalities,
+        "composition_repeats": args.composition_repeats,
         "resolved_eval_rules": eval_rules,
         "effective_train_sequences": len(train_prompts),
         "effective_validation_sequences": len(validation_prompts),
         "held_out_sequences_per_rule": len(test_prompts),
-        "manifest_sha256": hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        "manifest_sha256": sha256_file(manifest_path),
+        "tokenization_contract": "add_special_tokens=True for generation, training, and PPL",
+        "tokenizer_identity": tokenizer_identity(tokenizer),
+        "partition_sha256": files_sha256(
+            partition_path,
+            [
+                "leaf_ids.npy",
+                "semantic_group_ids.npy",
+                "boundary_ids.npy",
+                "banned_ids.npy",
+                "hierarchy_config.json",
+                "watermark_compositions.json",
+            ],
+        ),
         "trainable_parameters": int(sum(parameter.numel() for parameter in model.trainable_parameters())),
         "lora_layers": len(model.lora_layers),
         "runtime_seconds": runtime,

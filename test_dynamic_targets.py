@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import sys
 import unittest
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -90,32 +88,15 @@ class DynamicTargetTests(unittest.TestCase):
         self.assertTrue(torch.isfinite(left).all())
         self.assertTrue(torch.allclose(left, -right, atol=1e-6))
 
-    def test_matches_repository_native_kgw_when_available(self) -> None:
-        emnlp_root = Path(__file__).resolve().parents[1]
-        sys.path.insert(0, str(emnlp_root))
-        try:
-            try:
-                from watermark_project.watermarkability.rules import KgwDynamicRule
-            except ModuleNotFoundError as exc:
-                if exc.name and exc.name.startswith("watermark_project"):
-                    self.skipTest(
-                        "repository-native KGW cross-check requires the complete repository"
-                    )
-                raise
-
-            key = 31415
-            prefix = [2, 9, 5, 12]
-            rule = KgwDynamicRule(vocab_size=8, seed_count=1, seed_offset=3779)
-            expected = rule.target(prefix, key=key)
-            seed = kgw_row_seed(
-                prefix, key=key, seed_count=1, seed_offset=3779
-            )
-            self.assertEqual(int(expected.metadata["row_seed"]), seed)
-            self.assertTrue(
-                np.array_equal(expected.mask, green_mask_for_seed(seed, 8))
-            )
-        finally:
-            sys.path.pop(0)
+    def test_matches_repository_native_kgw_fixture(self) -> None:
+        seed = kgw_row_seed(
+            [2, 9, 5, 12], key=31415, seed_count=1, seed_offset=3779
+        )
+        self.assertEqual(seed, 1082315466)
+        np.testing.assert_array_equal(
+            green_mask_for_seed(seed, 8),
+            np.asarray([1, 0, 1, 1, 0, 1, 1, 1], dtype=bool),
+        )
 
 
 if __name__ == "__main__":

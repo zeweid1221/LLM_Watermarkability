@@ -1,17 +1,28 @@
-# Bundle validation
+# Validation Checklist
 
-Validated locally on August 10, 2026 with OPT-125M and an RTX 4060 Laptop GPU.
+Run from the repository root after installing `requirements.txt`.
 
-- Python compilation passed for all five Python entry points.
-- The target-set unit smoke verified the closed-form mass equation, the
-  10-word VT-Hamming codebook, and 7+1 block schedules.
-- The packaged manifest contains 5,756 unique prompts: 5,000 train, 500
-  validation, and 256 held-out test rows.
-- Manifest SHA-256:
-  `99538c8bd6f0de4c1e598e9c8d67df88027ec48e2d4fd7294080eadc62efd56f`.
-- A full two-example GPU smoke completed hard trajectory generation, one LoRA
-  epoch, validation, checkpoint reload, and all four generation/evaluation
-  modes with finite outputs.
+```bash
+python -m compileall -q .
+python -m unittest discover -p "test_*.py" -v
+```
 
-The smoke checks implementation plumbing only. Its two-example metrics are not
-scientific results and are excluded from the MSI archive.
+The suite checks the controller equations, LoRA gradients, static and dynamic
+target masks, exhaustive composition coverage, prompt-tokenization consistency,
+cache fingerprints, partition identity checks, adapter checkpoint integrity,
+cross-rule formulas, and teacher-forced watermarkability statistics.
+
+For each completed model run, also execute `validate_atomic16_pipeline.py` with
+the corresponding fixed partition and expected rule list. Run
+`validate_cross_rule_watermarkability.py` on both model directories before
+combining the cross-rule results.
+
+The paper source has a separate numeric consistency check:
+
+```bash
+python paper_tmlr/scripts/validate_results.py
+```
+
+Small smoke runs verify plumbing only and must not be reported as scientific
+results. See `IMPLEMENTATION_AUDIT.md` for release findings that affect result
+compatibility.

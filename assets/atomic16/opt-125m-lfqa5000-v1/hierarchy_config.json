@@ -1,0 +1,41 @@
+{
+  "num_leaves": 16,
+  "vocab_size": 50272,
+  "metadata": {
+    "partition_version": "model_specific_atomic16_v1",
+    "model_name": "facebook/opt-125m",
+    "manifest": "data/lfqa_prompts_5756.jsonl",
+    "calibration_split": "train",
+    "validation_split": "validation",
+    "old_boundary_tokens_reintegrated": 150,
+    "tokenizer_name_or_path": "facebook/opt-125m",
+    "tokenizer_class": "GPT2Tokenizer",
+    "tokenizer_vocab_size": 50265,
+    "tokenizer_vocab_sha256": "8a17e655ffd8383ede2764bd8e5f3f1cb767eedb1836c61402e82c4430802c80",
+    "optimizer": {
+      "num_leaves": 16,
+      "frontiers": [
+        2,
+        4,
+        8,
+        16
+      ],
+      "semantic_lsh_bits": 8,
+      "mass_strata_bins": 256,
+      "steps": 160,
+      "learning_rate": 0.08,
+      "temperature_start": 1.5,
+      "temperature_end": 0.15,
+      "mass_weight": 1.0,
+      "count_weight": 0.25,
+      "semantic_weight": 0.1,
+      "entropy_weight": 0.02,
+      "context_batch_size": 256,
+      "rounding_context_count": 256,
+      "seed": 20260810
+    },
+    "num_contexts": 5000,
+    "rounding_contexts": 256,
+    "num_usable_tokens": 50270
+  }
+}

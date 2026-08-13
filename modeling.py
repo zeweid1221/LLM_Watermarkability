@@ -63,16 +63,47 @@ def inject_lora(
 class ConditionProjector(nn.Module):
     """Inject an exact target-set summary into the current prediction state."""
 
-    def __init__(self, hidden_size: int, rank: int):
+    def __init__(self, hidden_size: int, rank: int, feature_dim: int = 0):
         super().__init__()
+        self.feature_dim = int(feature_dim)
         self.norm = nn.LayerNorm(hidden_size, elementwise_affine=False)
         self.down = nn.Linear(hidden_size, rank, bias=False)
         self.up = nn.Linear(rank, hidden_size, bias=False)
         nn.init.kaiming_uniform_(self.down.weight, a=5**0.5)
         nn.init.zeros_(self.up.weight)
+        if self.feature_dim:
+            self.feature_down = nn.Linear(self.feature_dim, rank, bias=False)
+            self.feature_up = nn.Linear(rank, hidden_size, bias=False)
+            nn.init.kaiming_uniform_(self.feature_down.weight, a=5**0.5)
+            nn.init.zeros_(self.feature_up.weight)
+        else:
+            self.feature_down = None
+            self.feature_up = None
 
-    def forward(self, summaries: torch.Tensor) -> torch.Tensor:
-        return self.up(torch.nn.functional.silu(self.down(self.norm(summaries.float()))))
+    def forward(
+        self,
+        summaries: torch.Tensor,
+        features: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        output = self.up(
+            torch.nn.functional.silu(self.down(self.norm(summaries.float())))
+        )
+        if self.feature_dim:
+            if features is None:
+                raise ValueError("Target geometry features are required by this adapter.")
+            if features.shape[:-1] != summaries.shape[:-1]:
+                raise ValueError("Target summary and feature shapes do not match.")
+            if features.shape[-1] != self.feature_dim:
+                raise ValueError(
+                    f"Expected {self.feature_dim} target features, got "
+                    f"{features.shape[-1]}."
+                )
+            output = output + self.feature_up(
+                torch.nn.functional.silu(
+                    self.feature_down(features.float())
+                )
+            )
+        return output
 
 
 class TargetConditionedLoRA(nn.Module):
@@ -85,6 +116,7 @@ class TargetConditionedLoRA(nn.Module):
         rank: int = 8,
         alpha: float = 16.0,
         dropout: float = 0.05,
+        condition_feature_dim: int = 0,
         target_suffixes: Sequence[str] = ("q_proj", "v_proj"),
     ):
         super().__init__()
@@ -92,7 +124,9 @@ class TargetConditionedLoRA(nn.Module):
         for parameter in self.base_model.parameters():
             parameter.requires_grad_(False)
         hidden_size = int(base_model.get_input_embeddings().embedding_dim)
-        self.conditioner = ConditionProjector(hidden_size, rank)
+        self.conditioner = ConditionProjector(
+            hidden_size, rank, feature_dim=condition_feature_dim
+        )
         self.lora_layers = inject_lora(
             self.base_model,
             rank=rank,
@@ -120,12 +154,15 @@ class TargetConditionedLoRA(nn.Module):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor | None = None,
         target_summaries: torch.Tensor | None = None,
+        target_features: torch.Tensor | None = None,
         use_adapters: bool = True,
         **kwargs,
     ):
         embeddings = self.base_model.get_input_embeddings()(input_ids)
         if use_adapters and target_summaries is not None:
-            embeddings = embeddings + self.conditioner(target_summaries).to(embeddings.dtype)
+            embeddings = embeddings + self.conditioner(
+                target_summaries, target_features
+            ).to(embeddings.dtype)
         with self.adapters_enabled(use_adapters):
             return self.base_model(
                 inputs_embeds=embeddings,
@@ -181,6 +218,38 @@ def topk_contrast_summaries(
     )
     summaries = (weights.mul(signs).unsqueeze(-1) * token_embeddings).sum(dim=1)
     return torch.nn.functional.normalize(summaries, dim=-1)
+
+
+def target_geometry_features(
+    base_logits: torch.Tensor,
+    target_mask: torch.Tensor,
+) -> torch.Tensor:
+    """Describe the current request without exposing a watermark-rule ID.
+
+    The three bounded features are native target mass, target vocabulary
+    fraction, and normalized next-token entropy.
+    """
+    if base_logits.ndim != 2 or target_mask.ndim != 2:
+        raise ValueError("Expected [B,V] logits and target masks.")
+    if base_logits.shape != target_mask.shape:
+        raise ValueError("base_logits and target_mask shapes must match.")
+    probabilities = torch.softmax(base_logits.float(), dim=-1)
+    mask = target_mask.to(probabilities.dtype)
+    native_mass = (probabilities * mask).sum(dim=-1)
+    target_fraction = mask.mean(dim=-1)
+    log_probs = torch.log_softmax(base_logits.float(), dim=-1)
+    entropy = -(probabilities * log_probs).sum(dim=-1)
+    normalizer = torch.log(
+        torch.as_tensor(
+            float(base_logits.shape[-1]),
+            device=base_logits.device,
+            dtype=torch.float32,
+        )
+    ).clamp_min(1.0)
+    normalized_entropy = entropy / normalizer
+    return torch.stack(
+        [native_mass, target_fraction, normalized_entropy], dim=-1
+    )
 
 
 def apply_closed_form_residual(

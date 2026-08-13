@@ -1,5 +1,4 @@
 #!/bin/bash -l
-#SBATCH -A liyanxie
 #SBATCH -p a100-4
 #SBATCH --gres=gpu:a100:1
 #SBATCH --cpus-per-task=8
@@ -37,6 +36,7 @@ case "${SLURM_ARRAY_TASK_ID}" in
 esac
 
 python run_experiment.py \
+  --training-protocol schedule_pool \
   --manifest data/mixed_prompts_22256.jsonl \
   --partition-dir assets/opt_hierarchy \
   --output-dir "outputs/opt125m_lora_20k_${LABEL}_seed20260810" \
