@@ -12,7 +12,7 @@ set -euo pipefail
 
 ROOT=${WM_LORA_ROOT:-$HOME/watermarkability_lora_msi}
 PARTITION_DIR=assets/atomic16/opt-125m-lfqa5000-v1
-OUTPUT_DIR=outputs/opt125m_composition_pool_corrected_lfqa5000x4_rank16_epochs6_seed20260812
+OUTPUT_DIR=outputs/opt125m_composition_pool_release_lfqa5000x4_rank16_epochs6_seed20260810
 RULES=ecc,binary,cw_abcd,unigram,atomic_kgw,atomic_kgw25,entropy_kgw
 
 cd "$ROOT"

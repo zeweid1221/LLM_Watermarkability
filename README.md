@@ -106,7 +106,7 @@ Validate a completed main run:
 ```bash
 python validate_atomic16_pipeline.py \
   --partition-dir assets/atomic16/opt-125m-lfqa5000-v1 \
-  --experiment-dir outputs/opt125m_composition_pool_corrected_lfqa5000x4_rank16_epochs6_seed20260812 \
+  --experiment-dir outputs/opt125m_composition_pool_release_lfqa5000x4_rank16_epochs6_seed20260810 \
   --expected-rules ecc,binary,cw_abcd,unigram,atomic_kgw,atomic_kgw25,entropy_kgw
 ```
 
