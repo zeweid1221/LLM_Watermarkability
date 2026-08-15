@@ -333,11 +333,11 @@ def check_latex() -> None:
 if __name__ == "__main__":
     check_model(
         "opt_composition_pool_corrected_evaluation_summary.csv",
-        0.476185,
-        0.237524,
-        0.479861,
-        0.253833,
-        minimum_adherence=0.9975,
+        0.460592,
+        0.222231,
+        0.462794,
+        0.237460,
+        minimum_adherence=0.9979,
     )
     check_model(
         "qwen3_composition_pool_corrected_evaluation_summary.csv",
@@ -348,11 +348,12 @@ if __name__ == "__main__":
         minimum_adherence=0.9967,
     )
     check_model(
-        "opt_schedule_aware_legacy_evaluation_summary.csv",
-        0.4802,
-        0.3214,
-        0.48708,
-        0.34657,
+        "opt_schedule_aware_corrected_evaluation_summary.csv",
+        0.475367,
+        0.319061,
+        0.484668,
+        0.342642,
+        minimum_adherence=0.9976,
     )
     check_model(
         "qwen3_schedule_aware_legacy_evaluation_summary.csv",

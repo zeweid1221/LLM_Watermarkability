@@ -10,7 +10,8 @@ python -m unittest discover -p "test_*.py" -v
 The suite checks the controller equations, LoRA gradients, static and dynamic
 target masks, exhaustive composition coverage, prompt-tokenization consistency,
 cache fingerprints, partition identity checks, adapter checkpoint integrity,
-cross-rule formulas, and teacher-forced watermarkability statistics.
+cross-rule formulas, teacher-forced watermarkability statistics, and exact
+materialization of the three released paper protocol configs.
 
 For each completed model run, also execute `validate_atomic16_pipeline.py` with
 the corresponding fixed partition and expected rule list. Run

@@ -1,0 +1,2 @@
+rules,mean_per_rule_ppl_reduction_pct,bootstrap_ci_low,bootstrap_ci_high,minimum_token_adherence,mean_token_adherence
+6,48.46682017777792,46.06398368667728,50.5928829170039,0.9976806640625,0.9985012478298612

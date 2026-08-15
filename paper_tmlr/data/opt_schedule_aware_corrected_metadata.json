@@ -1,0 +1,12 @@
+{
+  "msi_job_id": "15677252",
+  "job_name": "wm_opt_sched_corrected",
+  "state": "COMPLETED",
+  "exit_code": "0:0",
+  "elapsed": "02:37:55",
+  "source_archive": "opt125m_schedule_aware_corrected_7rules_lfqa5000_each_rank16_epochs6_seed20260810.tar.gz",
+  "source_archive_sha256": "3b19032b5ade3ff03044bbfdf1e2543997bbd39d4574e04d50e100e55bed3f91",
+  "protocol_config": "configs/opt_schedule_aware.json",
+  "protocol": "schedule_pool with special-token-consistent prompt encoding",
+  "bootstrap_resamples": 20000
+}

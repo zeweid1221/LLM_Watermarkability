@@ -18,6 +18,7 @@ entropy-gated Atomic-KGW schedules over a shared 16-atom vocabulary partition.
 | Cross-rule watermarkability on shared unwatermarked trajectories | `analyze_cross_rule_watermarkability.py` | `validate_cross_rule_watermarkability.py` |
 | Paired PPL reductions and bootstrap intervals | `analyze_composition_pool_paired.py` | paper result validator |
 | Teacher-forced ECC diagnostic | `analyze_teacher_forced_watermarkability.py` | `test_teacher_forced_watermarkability.py` |
+| Corrected OPT schedule-aware appendix control | `configs/opt_schedule_aware.json` | paired bootstrap and paper result validator |
 
 `modeling.py` implements LoRA conditioning and the analytic controller;
 `targets.py` implements target schedules and generic atom unions; and
@@ -66,32 +67,47 @@ python build_atomic16_partition.py \
 The builder excludes tokenizer special IDs and output-matrix padding rows. It no
 longer requires a partition from another repository.
 
-## Main Runs
+## Reproducing Paper Runs
 
-The canonical paper protocol is `composition_pool_corrected`. It trains on all
+The canonical paper protocol trains on all
 2-, 4-, 7-, and 8-of-16 atom unions without invoking an evaluated watermark
 schedule. With 5,000 prompts repeated four times, it uses 20,000 training and
 2,000 validation trajectories. Watermark schedules are attached only on the 256
 held-out prompts.
 
-On Slurm, set the repository root and optional account, then submit both models:
+Scientific settings are stored in scheduler-independent JSON files:
+
+| Config | Paper role |
+|---|---|
+| `configs/opt_composition_pool.json` | Main OPT composition-pool result |
+| `configs/qwen3_composition_pool.json` | Main Qwen3 composition-pool result |
+| `configs/opt_schedule_aware.json` | Corrected OPT schedule-aware appendix control |
+| `configs/qwen3_schedule_aware.json` | Qwen3 schedule-aware appendix control |
+
+Run any protocol locally or inside an allocated GPU job:
+
+```bash
+python run_paper_protocol.py --config configs/opt_composition_pool.json
+```
+
+For Slurm, the repository provides one optional scheduler wrapper. Cluster
+partition, GPU type, memory, and time directives may need adjustment:
 
 ```bash
 export WM_LORA_ROOT="$HOME/LLM_Watermarkability"
-export WM_SLURM_ACCOUNT="your-account"  # omit when the cluster has a default
-bash submit_composition_pool_models.sh
+sbatch scripts/hpc/run_config.slurm configs/opt_composition_pool.json
 ```
 
-The launchers live under `protocols/composition_pool_corrected/`. Cluster
-partition, GPU, memory, and time directives may need adjustment outside MSI.
-The schedule-aware control is isolated under `protocols/schedule_aware_legacy/`
-and is never selected implicitly.
+The wrapper contains no scientific hyperparameters; it only allocates compute
+and invokes the selected JSON config. The schedule-aware controls use the same
+held-out prompts and evaluation settings as their generic counterparts while
+training on 5,000 prompts for each of seven request schedules. The released OPT
+table comes from the corrected special-token-consistent rerun.
 
-After the model runs, compute the shared-trajectory cross-rule analysis:
-
-```bash
-bash submit_cross_rule_watermarkability.sh
-```
+The shared-trajectory analysis is scheduler independent as well. Run
+`python analyze_cross_rule_watermarkability.py --help` for model-specific
+arguments, then combine the OPT and Qwen outputs with
+`validate_cross_rule_watermarkability.py`.
 
 ## Validation
 
@@ -115,9 +131,8 @@ partition files, tokenizer, model, and generation settings. A stale cache is
 rejected rather than silently reused. Adapter checkpoints are also loaded with
 an exact trainable-key check.
 
-See `IMPLEMENTATION_AUDIT.md` for the release audit and
-`protocols/README.md` for the distinction between the two training protocols.
-The compact aggregate tables used by the paper and their independent numeric
-validator are released under `paper_tmlr/data/` and
+See `IMPLEMENTATION_AUDIT.md` for the release audit. The compact aggregate
+tables used by the paper and their independent numeric validator are released
+under `paper_tmlr/data/` and
 `paper_tmlr/scripts/validate_results.py`; model checkpoints and token-level
 generation archives remain excluded because of their size.

@@ -30,6 +30,11 @@ tmlr_template_download/
 *.tar.gz
 *.zip
 
+# Compact paper tables are versioned even though generated data directories are not.
+!paper_tmlr/data/
+!paper_tmlr/data/*.csv
+!paper_tmlr/data/*.json
+
 # Small, fixed model-specific partitions used by the paper protocols.
 !assets/
 assets/*

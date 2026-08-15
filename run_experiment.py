@@ -56,9 +56,17 @@ from targets import (
 )
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument(
+        "--config",
+        help="JSON protocol config. Explicit command-line arguments override it.",
+    )
+    config_args, _ = config_parser.parse_known_args(argv)
+
     parser = argparse.ArgumentParser(
-        description="Train and evaluate the target-conditioned watermarkability adapter."
+        description="Train and evaluate the target-conditioned watermarkability adapter.",
+        parents=[config_parser],
     )
     parser.add_argument("--manifest", default="data/mixed_prompts_5756.jsonl")
     parser.add_argument("--partition-dir", default="assets/opt_hierarchy")
@@ -143,7 +151,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--skip-prepare", action="store_true")
     parser.add_argument("--trajectory-cache")
-    return parser.parse_args()
+
+    if config_args.config:
+        config_path = Path(config_args.config)
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+        experiment = payload.get("experiment", payload)
+        if not isinstance(experiment, dict):
+            raise ValueError("Protocol config 'experiment' must be a JSON object.")
+        valid_keys = {
+            action.dest
+            for action in parser._actions
+            if action.dest not in {"help", "config"}
+        }
+        unknown = sorted(set(experiment) - valid_keys)
+        if unknown:
+            raise ValueError(
+                "Unknown experiment config keys: " + ", ".join(unknown)
+            )
+        parser.set_defaults(**experiment)
+
+    return parser.parse_args(argv)
 
 
 def stable_int(*parts: object) -> int:

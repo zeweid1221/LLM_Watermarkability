@@ -32,19 +32,17 @@ teacher-forced ECC diagnostic.
 - Adapter loading rejects missing or extra trainable tensors.
 - Validation metrics are weighted by active positions rather than averaging
   partial batches equally.
-- Canonical Slurm launchers no longer contain personal absolute paths or a fixed
-  allocation account.
+- Scientific settings are stored in scheduler-independent JSON configs. The
+  optional Slurm file only requests resources and dispatches a selected config.
 
 ## Result Compatibility
 
 Qwen3-8B uses the same prompt token sequence with or without the tokenizer's
-special-token flag, so its saved adapter results are unaffected by the
-tokenization fix. OPT-125M adds a BOS token: its saved trajectories were
-generated with BOS, while the earlier training loader omitted BOS and held-out
-evaluation included it. The reported held-out metrics remain measurements of
-those trained checkpoints, but the unified release protocol requires the OPT
-composition-pool and schedule-aware runs to be repeated before their values are
-treated as final public tables.
+special-token flag, so its saved adapter results were unaffected by the
+tokenization fix. OPT-125M adds a BOS token, and both the generic
+composition-pool run and the schedule-aware appendix control were repeated with
+the unified tokenization contract. The released compact tables come from these
+corrected runs.
 
 The released partition files are the exact fixed artifacts used by the saved
 runs. At runtime, unavailable output-padding rows were excluded and neither
@@ -53,5 +51,5 @@ excludes those rows earlier during optimization as well.
 
 ## Test Status
 
-The standalone release suite contains 43 passing tests, including a frozen
+The standalone release suite contains 46 passing tests, including a frozen
 reference fixture produced by the repository-native KGW implementation.
