@@ -29,11 +29,42 @@ tmlr_template_download/
 *.npy
 *.tar.gz
 *.zip
+*.pdf
+
+# Local manuscripts, reviews, and Overleaf bundles are not part of the code release.
+paper/
+paper_arxiv/
+paper_tmlr/
+research/
+overleaf_*/
+tmlr_overleaf_*/
+*_REPORT.md
+QWEN3_FOUR_DIAGNOSTICS.md
+QWEN3_RESULT_AUDIT.md
+PAPER_PLAN.md
+PROTOCOL_CORRECTION_*.md
+RELATED_WORK_OVERLAP_AUDIT_*.md
+diagnose_qwen3_checkpoints.py
+validate_qwen3_diagnostics.py
+
+# LaTeX build products.
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.out
+*.synctex*
 
 # Compact paper tables are versioned even though generated data directories are not.
-!paper_tmlr/data/
-!paper_tmlr/data/*.csv
-!paper_tmlr/data/*.json
+!paper_results/
+paper_results/*
+!paper_results/data/
+!paper_results/data/*.csv
+!paper_results/data/*.json
+!paper_results/scripts/
+paper_results/scripts/*
+!paper_results/scripts/validate_results.py
 
 # Small, fixed model-specific partitions used by the paper protocols.
 !assets/
@@ -41,6 +72,15 @@ assets/*
 !assets/atomic16/
 !assets/atomic16/**
 !assets/atomic16/**/*.npy
+
+# Small released adapter used by the one-command demo.
+!checkpoints/
+checkpoints/*
+!checkpoints/opt125m_composition_pool/
+!checkpoints/opt125m_composition_pool/adapter_best.pt
+!checkpoints/opt125m_composition_pool/metadata.json
+!checkpoints/opt125m_composition_pool/NOTICE.md
+!checkpoints/opt125m_composition_pool/OPT_LICENSE.md
 
 # Editors and OS files
 .vscode/

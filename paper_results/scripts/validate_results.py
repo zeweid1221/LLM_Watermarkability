@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import math
-import re
 from pathlib import Path
 
 
@@ -195,81 +194,6 @@ def check_cross_rule_diagnostic() -> None:
         max(ppl_ratios["Qwen/Qwen3-8B"]), 13.174520829, abs_tol=1e-8
     )
 
-    labels = {
-        "ecc": "ECC",
-        "binary": "Binary",
-        "cw_abcd": "CW-ABCD",
-        "unigram": "Unigram",
-        "atomic_kgw": "Atomic-KGW50",
-        "atomic_kgw25": "Atomic-KGW25",
-    }
-    main = (ROOT / "sections" / "5_experiments.tex").read_text(encoding="utf-8")
-    assert "$3.58\\times$ to $13.18\\times$" in main
-    assert "$0.91\\times$ to $3.68\\times$" in main
-    indexed = {(row["model"], row["target_rule"]): row for row in rows}
-    for rule, label in labels.items():
-        opt = indexed[("facebook/opt-125m", rule)]
-        qwen = indexed[("Qwen/Qwen3-8B", rule)]
-        values = (
-            float(opt["empirical_watermarkability_at_tau"]),
-            float(opt["reference_log_ppl_increase"]),
-            float(qwen["empirical_watermarkability_at_tau"]),
-            float(qwen["reference_log_ppl_increase"]),
-        )
-        formatted = [f"{value:.3f}" for value in values]
-        formatted[1] = rf"(?:\$)?{re.escape(formatted[1])}(?:\$)?"
-        pattern = (
-            rf"{re.escape(label)}\s*&\s*{formatted[0]}\s*&\s*"
-            rf"{formatted[1]}\s*&\s*{formatted[2]}\s*&\s*{formatted[3]}"
-        )
-        assert re.search(pattern, main), f"Missing diagnostic table row for {rule}"
-
-
-def check_reported_composition_results() -> None:
-    labels = {
-        "ecc": "ECC",
-        "binary": "Binary",
-        "cw_abcd": "CW-ABCD",
-        "unigram": "Unigram",
-        "atomic_kgw": "Atomic-KGW50",
-        "atomic_kgw25": "Atomic-KGW25",
-    }
-    main = (ROOT / "sections" / "5_experiments.tex").read_text(encoding="utf-8")
-    model_files = (
-        "opt_composition_pool_corrected_evaluation_summary.csv",
-        "qwen3_composition_pool_corrected_evaluation_summary.csv",
-    )
-    values: dict[str, list[tuple[float, float, float]]] = {}
-    for filename in model_files:
-        rows = read_csv(filename)
-        fixed = {row["target_rule"]: row for row in by_mode(rows, "fixed_delta20")}
-        final = {row["target_rule"]: row for row in by_mode(rows, "lora_residual")}
-        for rule in labels:
-            fixed_ppl = float(fixed[rule]["base_ppl_from_corpus_nll"])
-            final_ppl = float(final[rule]["base_ppl_from_corpus_nll"])
-            reduction = 100.0 * (fixed_ppl - final_ppl) / fixed_ppl
-            values.setdefault(rule, []).append((fixed_ppl, final_ppl, reduction))
-
-    for rule, label in labels.items():
-        opt, qwen = values[rule]
-        signed_qwen = rf"(?:\$)?{qwen[2]:.1f}(?:\$)?"
-        pattern = (
-            rf"{re.escape(label)}\s*&\s*{opt[0]:.2f}\s*&\s*"
-            rf"{opt[1]:.2f}\s*&\s*{opt[2]:.1f}\\%\s*&\s*"
-            rf"{qwen[0]:.2f}\s*&\s*{qwen[1]:.2f}\s*&\s*"
-            rf"{signed_qwen}\\%"
-        )
-        assert re.search(pattern, main), f"Missing cross-model table row for {rule}"
-
-    non_appendix = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in sorted((ROOT / "sections").glob("*.tex"))
-        if path.name != "A_appendix.tex"
-    )
-    assert "21.38" not in non_appendix
-    assert "14.97" not in non_appendix
-
-
 def check_qwen_composition_uncertainty() -> None:
     paired = read_csv("qwen3_composition_pool_corrected_paired_ppl.csv")
     expected = {
@@ -303,31 +227,6 @@ def check_qwen_composition_uncertainty() -> None:
         ("minimum_token_adherence", 0.997965),
     ):
         assert math.isclose(float(row[column]), target, abs_tol=1e-6)
-
-
-def check_latex() -> None:
-    tex_paths = [ROOT / "main.tex", *sorted((ROOT / "sections").glob("*.tex"))]
-    text = "\n".join(path.read_text(encoding="utf-8") for path in tex_paths)
-    assert not re.search(
-        r"TODO|FIXME|DATA_NEEDED|Pending|in progress", text, flags=re.IGNORECASE
-    )
-
-    cited: set[str] = set()
-    for match in re.finditer(r"\\cite[a-zA-Z]*\{([^}]*)\}", text):
-        cited.update(key.strip() for key in match.group(1).split(","))
-    bib = (ROOT / "references.bib").read_text(encoding="utf-8")
-    available = set(re.findall(r"^@[^{]+\{([^,]+),", bib, flags=re.MULTILINE))
-    missing = cited - available
-    dead = available - cited
-    assert not missing, f"Missing bibliography keys: {sorted(missing)}"
-    assert not dead, f"Uncited bibliography keys: {sorted(dead)}"
-
-    main_text = "\n".join(
-        path.read_text(encoding="utf-8")
-        for path in tex_paths
-        if path.name != "A_appendix.tex"
-    )
-    assert "Entropy-KGW" not in main_text
 
 
 if __name__ == "__main__":
@@ -365,7 +264,5 @@ if __name__ == "__main__":
     check_compositions()
     check_teacher_diagnostic()
     check_cross_rule_diagnostic()
-    check_reported_composition_results()
     check_qwen_composition_uncertainty()
-    check_latex()
-    print("ALL PAPER RESULTS PASSED")
+    print("ALL RELEASED RESULTS PASSED")

@@ -21,7 +21,7 @@ combining the cross-rule results.
 The paper source has a separate numeric consistency check:
 
 ```bash
-python paper_tmlr/scripts/validate_results.py
+python paper_results/scripts/validate_results.py
 ```
 
 Small smoke runs verify plumbing only and must not be reported as scientific

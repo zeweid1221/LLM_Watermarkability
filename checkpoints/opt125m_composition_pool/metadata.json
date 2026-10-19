@@ -1,0 +1,24 @@
+{
+  "format_version": 1,
+  "paper_role": "OPT-125M main composition-pool adapter",
+  "model_name": "facebook/opt-125m",
+  "license": "OPT-175B License",
+  "license_file": "OPT_LICENSE.md",
+  "training_protocol": "composition_pool",
+  "lora_rank": 16,
+  "lora_alpha": 32.0,
+  "lora_dropout": 0.05,
+  "condition_summary_mode": "topk_contrast",
+  "condition_top_k": 128,
+  "paper_tau": 0.99,
+  "paper_temperature": 0.75,
+  "checkpoint_sha256": "25959f24b5b93d7762bf98e95767ebc46582ca2cf8d22a73d63218f21ec59c55",
+  "partition_sha256": {
+    "banned_ids.npy": "f03278057b4d5f43801f6d40872a9d20f6ef00d4b89530e1c5b25a9f7013b80c",
+    "boundary_ids.npy": "e9c94eb10396de8a4020797893293d231bc84774200eb971eca49e3bd843d6cb",
+    "hierarchy_config.json": "d30ac5a7eade7fb6b84aa1613aca10cd375ede6a69d83f1be6d539dfa1a1cbba",
+    "leaf_ids.npy": "d893c2c2f57a94268ff20e09bddbee21435d25ec50e4296367a58e2fb002d8d3",
+    "semantic_group_ids.npy": "7e12dd0e04753d12fd32064bd89bed613ab2476f2e4407145376298a21e53c4b",
+    "watermark_compositions.json": "7ecbcea74274f0a43b966a8fcbd28a02d769d3d89ad617ce784551de14d6d219"
+  }
+}

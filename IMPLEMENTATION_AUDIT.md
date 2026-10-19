@@ -16,7 +16,7 @@ teacher-forced ECC diagnostic.
   over equal-length 96-token continuations.
 - Cross-rule analysis uses one saved unwatermarked trajectory per model and
   verifies exact prompt and generated-token hashes.
-- Paper tables and archived summaries pass their independent value validator.
+- Released aggregate tables pass their self-contained numeric validator.
 
 ## Release Fixes
 
@@ -34,6 +34,8 @@ teacher-forced ECC diagnostic.
   partial batches equally.
 - Scientific settings are stored in scheduler-independent JSON configs. The
   optional Slurm file only requests resources and dispatches a selected config.
+- The demo adapter and fixed partition are distributed with SHA-256 metadata
+  and are verified before a model is loaded.
 
 ## Result Compatibility
 
@@ -51,5 +53,6 @@ excludes those rows earlier during optimization as well.
 
 ## Test Status
 
-The standalone release suite contains 46 passing tests, including a frozen
-reference fixture produced by the repository-native KGW implementation.
+The standalone release suite contains 49 passing tests, including a frozen
+reference fixture produced by the repository-native KGW implementation and
+release-artifact checks for the demo adapter and partition.
